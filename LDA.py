@@ -5,6 +5,8 @@ class LDA:
 
     def calRanking (self, metaCard, userPref):
         rankList = {}
+        print(metaCard)
+        print(userPref)
         rankList["0"] = "Document 0 is a document"
         rankList["1"] = "Document 1 is a document"
         rankList["2"] = "Document 2 is a document"

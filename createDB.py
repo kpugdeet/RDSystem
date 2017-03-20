@@ -3,12 +3,14 @@ from pymongo import MongoClient
 # Initial DB
 client = MongoClient()
 db = client.data
-users = db.users
+usersDB = db.users
+itemsDB = db.items
 
 items = []
 
 for itemID in range(10):
-    items.append({"id": itemID, "itemDes": 'Des'+str(itemID), "itemValue": '1,1,1,'+str(itemID)})
+    items.append({"_id": str(itemID), "itemDes": 'Des'+str(itemID), "itemValue": '1,1,1,'+str(itemID)})
+    itemsDB.insert({"_id": str(itemID), "itemDes": 'Des'+str(itemID), "itemValue": '1,1,1,'+str(itemID)})
 
 for userID in range(10):
-    users.insert({"_id": userID, "items": items})
+    usersDB.insert({"_id": str(userID), "items": items})

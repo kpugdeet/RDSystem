@@ -1,10 +1,10 @@
 import web
 import json
-import sqlite3
 import numpy as np
-from ReadWriteLock import ReadWriteLock
-from LDA import LDA
+from pymongo import MongoClient
+from rbm import RBM
 import time
+import sqlite3
 
 urls = (
     "/query", "query",
@@ -13,8 +13,7 @@ urls = (
 )
 app = web.application(urls, globals())
 
-lda = LDA()
-rw = ReadWriteLock()
+rbm = RBM()
 
 class query:
     def __init__(self):
@@ -22,20 +21,18 @@ class query:
 
     def POST(self):
         data = json.loads(web.data())
-        conn = sqlite3.connect("user.db", check_same_thread=False)
-        c = conn.cursor()
+        client = MongoClient()
+        db = client.data
+        usersDB = db.users
 
         # Get user preference list
-        rw.acquire_read()
-        try:
-            for row in c.execute("SELECT itemDetail.itemValue FROM userPref JOIN itemDetail ON userPref.itemID = itemDetail.itemID "
-                                 "WHERE userID = '{0}';".format(data['userID'])):
-                self.userPref.append([int(x) for x in row[0].split(",")])
-        finally:
-            rw.release_read()
+        items = usersDB.find_one({"_id": data['userID']})
+        if items is not None:
+            for item in items["items"]:
+                self.userPref.append([float(x) for x in item["itemValue"].split(",")])
 
         # Make recommendation list
-        rankResult = lda.calRanking(data['metaCard'], np.array(self.userPref))
+        rankResult = rbm.calRanking(data['metaCard'], np.array(self.userPref))
 
         # Return result in json
         web.header('Content-Type', 'application/json')
@@ -47,44 +44,37 @@ class update:
 
     def POST(self):
         data = json.loads(web.data())
-        conn = sqlite3.connect("user.db", check_same_thread=False)
-        c = conn.cursor()
+        client = MongoClient()
+        db = client.data
+        usersDB = db.users
+        itemsDB = db.items
 
-        for tmp in data["item"]:
-            # Update to itemDetail db
-            rw.acquire_read()
-            try:
-                exist = c.execute("SELECT itemID FROM itemDetail WHERE itemID = {0} LIMIT 1;".format(tmp["itemID"]))
-            finally:
-                rw.release_read()
-            for row in exist:
-                break
+        # Check user already exist
+        items = usersDB.find_one({"_id": data['userID']})
+        if items is None:
+            items = []
+            exist = False
+        else:
+            items = items["items"]
+            exist = True
+
+        for tmp in data["items"]:
+            # Insert to items collection
+            item = itemsDB.find_one({"_id": tmp['itemID']})
+            if item is None:
+                distri = rbm.calDistri(tmp["itemDes"])[0]
+                itemsDB.insert({"_id": tmp["itemID"], "itemDes": tmp["itemDes"], "itemValue": distri})
             else:
-                rw.acquire_write()
-                try:
-                    c.execute("INSERT INTO itemDetail (itemID, itemDes, itemValue) VALUES ('{0}','{1}','{2}')"
-                              .format(tmp['itemID'], tmp['itemDes'], lda.calDistri(tmp['itemDes'])))
-                    conn.commit()
-                finally:
-                    rw.release_write()
+                distri = item["itemValue"]
 
-            # Check data exist
-            rw.acquire_read()
-            try:
-                exist = c.execute("SELECT userID FROM userPref WHERE userID = '{0}' and itemID = '{1}' LIMIT 1;".format(data['userID'], tmp['itemID']))
-            finally:
-                rw.release_read()
+            if not any(d["_id"] == tmp["itemID"] for d in items):
+                items.append({"_id": tmp["itemID"], "itemDes": tmp["itemDes"], "itemValue": distri})
 
-            # If not exist insert to db
-            for row in exist:
-                break
-            else:
-                rw.acquire_write()
-                try:
-                    c.execute("INSERT INTO userPref (userID, itemID) VALUES ('{0}','{1}')".format(data['userID'], tmp['itemID']))
-                    conn.commit()
-                finally:
-                    rw.release_write()
+        # Insert to users collection
+        if exist:
+            usersDB.update({"_id": data['userID']}, {"items": items}, upsert=True)
+        else:
+            usersDB.insert({"_id": data['userID'], "items": items})
 
         # Return status
         return self.output
@@ -96,32 +86,23 @@ class train:
         self.itemDes = []
 
     def POST(self):
-        conn = sqlite3.connect('user.db', check_same_thread=False)
-        c = conn.cursor()
+        client = MongoClient()
+        db = client.data
+        usersDB = db.users
+        itemsDB = db.items
 
         # Training new value for each item
-        rw.acquire_read()
-        try:
-            for row in c.execute("SELECT itemID, itemDes FROM itemDetail;"):
-                self.itemID.append(row[0])
-                self.itemDes.append(row[1])
-        finally:
-            rw.release_read()
+        for row in itemsDB.find():
+            self.itemID.append(row["_id"])
+            self.itemDes.append(row["itemDes"])
 
         # Train
-        itemValue = lda.train(self.itemID, self.itemDes)
+        itemValue = rbm.train(self.itemDes)
 
         # Write back to db
-        rw.acquire_write()
-        try:
-           c.executescript('drop table if exists itemDetail;')
-           c.execute("CREATE TABLE itemDetail (itemID text, itemDes text, itemValue text)")
-           for i in range(len(self.itemID)):
-               c.execute("INSERT INTO itemDetail VALUES ('{0}','{1}','{2}');".format(self.itemID[i], self.itemDes[i], itemValue[i]))
-           conn.commit()
-           time.sleep(10)
-        finally:
-            rw.release_write()
+        for i in range(len(self.itemID)):
+            itemsDB.update({"_id": self.itemID[i]}, {"$set": {"itemValue": itemValue[i]}}, upsert=True)
+            usersDB.update({"items": {"$elemMatch": {"_id": self.itemID[i]}}}, {"$set": {"items.$.itemValue": itemValue[i]}}, multi=True, upsert=True)
 
         # Return status
         return self.output
