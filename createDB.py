@@ -1,15 +1,14 @@
-import sqlite3
+from pymongo import MongoClient
 
-conn = sqlite3.connect('user.db', check_same_thread=False)
-c = conn.cursor()
-c.execute("CREATE TABLE userPref (userID text, itemID text, PRIMARY KEY (userID, itemID))")
-c.execute("CREATE TABLE itemDetail (itemID text PRIMARY KEY, itemDes text, itemValue text)")
+# Initial DB
+client = MongoClient()
+db = client.data
+users = db.users
+
+items = []
 
 for itemID in range(10):
-    c.execute("INSERT INTO itemDetail VALUES ('{0}','{1}','{2}');".format(itemID, 'des' + str(itemID), '1,1,1,'+str(itemID)))
+    items.append({"id": itemID, "itemDes": 'Des'+str(itemID), "itemValue": '1,1,1,'+str(itemID)})
 
-for itemID in range(3):
-    for userID in range(10):
-        c.execute("INSERT INTO userPref VALUES ('{0}','{1}');".format(userID, itemID))
-
-conn.commit()
+for userID in range(10):
+    users.insert({"_id": userID, "items": items})
