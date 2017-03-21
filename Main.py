@@ -3,8 +3,7 @@ import json
 import numpy as np
 from pymongo import MongoClient
 from rbm import RBM
-import time
-import sqlite3
+from ReadWriteLock import ReadWriteLock
 
 urls = (
     "/query", "query",
@@ -14,6 +13,7 @@ urls = (
 app = web.application(urls, globals())
 
 rbm = RBM()
+rw = ReadWriteLock()
 
 class query:
     def __init__(self):
@@ -86,23 +86,28 @@ class train:
         self.itemDes = []
 
     def POST(self):
-        client = MongoClient()
-        db = client.data
-        usersDB = db.users
-        itemsDB = db.items
+        rw.acquire_write()
+        try:
+            client = MongoClient()
+            db = client.data
+            usersDB = db.users
+            itemsDB = db.items
 
-        # Training new value for each item
-        for row in itemsDB.find():
-            self.itemID.append(row["_id"])
-            self.itemDes.append(row["itemDes"])
+            # Training new value for each item
+            for row in itemsDB.find():
+                self.itemID.append(row["_id"])
+                self.itemDes.append(row["itemDes"])
 
-        # Train
-        itemValue = rbm.train(self.itemDes)
+            # Train
+            itemValue = rbm.train(self.itemDes)
 
-        # Write back to db
-        for i in range(len(self.itemID)):
-            itemsDB.update({"_id": self.itemID[i]}, {"$set": {"itemValue": itemValue[i]}}, upsert=True)
-            usersDB.update({"items": {"$elemMatch": {"_id": self.itemID[i]}}}, {"$set": {"items.$.itemValue": itemValue[i]}}, multi=True, upsert=True)
+            # Write back to db
+            for i in range(len(self.itemID)):
+                print(i)
+                itemsDB.update({"_id": self.itemID[i]}, {"$set": {"itemValue": itemValue[i]}}, upsert=True)
+                usersDB.update({"items": {"$elemMatch": {"_id": self.itemID[i]}}}, {"$set": {"items.$.itemValue": itemValue[i]}}, multi=True, upsert=True)
+        finally:
+            rw.release_write()
 
         # Return status
         return self.output

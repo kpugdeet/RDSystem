@@ -132,9 +132,12 @@ class RBM:
     def train(self, items_des):
         self.input=self.processer.get_bag_words_matirx(items_des, max_vocaulary=10000)
 
-        self.num_hidden = 4
+        self.num_hidden = 20
         self.num_visible = len(self.input[0])
         self.learning_rate = 0.01
+        max_epochs = 50
+        batch_size = 100
+        step = 1
 
         # Create Random generator
         self.np_rng = np.random.RandomState(1234)
@@ -152,9 +155,6 @@ class RBM:
         self.delta_hbias = np.zeros(self.num_hidden)
         self.delta_vbias = np.zeros(self.num_visible)
 
-        max_epochs = 5
-        batch_size = 100
-        step = 1
         self.trainRBM(max_epochs=max_epochs, batch_size=batch_size, step=step)
         topic_distri=self.get_train_output(self.input)
         self.save_RBM_weights()
